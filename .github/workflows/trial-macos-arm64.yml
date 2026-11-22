@@ -1,0 +1,140 @@
+# SPDX-License-Identifier: MIT
+# Runner trial: does the release dmg build on a free standard macos-latest
+# (arm64) runner? No tests. Each step ends with a TRIAL| line
+# (.github/trial/mark.sh): time, disk, peak memory, cache sizes.
+name: trial-macos-arm64
+on:
+  workflow_dispatch:
+
+env:
+  VCPKG_DEFAULT_BINARY_CACHE: /Users/runner/vcpkg-bincache
+  MITCAD_RENDER_DEPS: /Users/runner/mitcad-render-deps
+  MITCAD_RENDER_JOBS: "3"
+  TRIAL_SIZES: >-
+    vcpkg-bincache=/Users/runner/vcpkg-bincache
+    vcpkg-buildtrees=/Users/runner/vcpkg/buildtrees
+    render-deps=/Users/runner/mitcad-render-deps
+    cargo-target=/Users/runner/work/Mitcad/Mitcad/build/macos-release/cargo
+    build=/Users/runner/work/Mitcad/Mitcad/build
+    cargo-home=/Users/runner/.cargo
+
+jobs:
+  dmg:
+    runs-on: macos-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the watcher
+        run: |
+          echo "TRIAL_ROOT=$HOME" >> "$GITHUB_ENV"
+          export TRIAL_ROOT=$HOME
+          mkdir -p "$RUNNER_TEMP/trial"
+          nohup bash .github/trial/watch.sh "$HOME" > /dev/null 2>&1 < /dev/null &
+          sysctl -n hw.ncpu hw.memsize machdep.cpu.brand_string; sw_vers
+          ls -d /Applications/Xcode*; xcode-select -p; xcodebuild -version; xcrun --sdk macosx --show-sdk-version
+          bash .github/trial/mark.sh start
+      - name: Free disk
+        run: |
+          rm -rf ~/Library/Android ~/.dotnet /usr/local/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          xcrun simctl delete all > /dev/null 2>&1 || true
+          bash .github/trial/mark.sh free-disk
+      - name: Newest Xcode and its Metal toolchain
+        run: |
+          newest=$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)
+          [ -n "$newest" ] && sudo xcode-select -s "$newest/Contents/Developer"
+          xcodebuild -version; xcrun --sdk macosx --show-sdk-version
+          if ! xcrun --sdk macosx metal --version > /dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun --sdk macosx metal --version
+          bash .github/trial/mark.sh xcode
+      - name: Restore vcpkg binary cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /Users/runner/vcpkg-bincache
+          key: vcpkg-macos-arm64-${{ hashFiles('vcpkg.json', 'third_party/vcpkg-ports/**', 'tools/dev-env/versions.sh', 'triplets/**') }}-${{ github.run_id }}
+          restore-keys: |
+            vcpkg-macos-arm64-${{ hashFiles('vcpkg.json', 'third_party/vcpkg-ports/**', 'tools/dev-env/versions.sh', 'triplets/**') }}-
+            vcpkg-macos-arm64-
+      - name: Restore render deps
+        id: rcache
+        uses: actions/cache/restore@v4
+        with:
+          path: /Users/runner/mitcad-render-deps
+          key: render-macos-arm64-${{ hashFiles('tools/dev-env/versions.sh', 'tools/dev-env/build-cycles-macos.sh', 'vcpkg.json', 'triplets/**', 'third_party/cycles/**') }}
+      - name: Toolchain (setup-macos.sh without cargo-deny, mosquitto, the render libraries)
+        run: |
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          find "$VCPKG_DEFAULT_BINARY_CACHE" -type f | wc -l > "$RUNNER_TEMP/bincache-count"
+          sed -i '' -e 's|^  cargo "+$RUST_TOOLCHAIN" install cargo-deny .*|  : cargo-deny not needed for the trial|' \
+            -e 's|^  brew install mosquitto$|  : mosquitto not needed for the trial|' \
+            -e 's|^"$SCRIPT_DIR/build-cycles-macos.sh"$|: the render libraries are a later step|' tools/dev-env/setup-macos.sh
+          git --no-pager diff --stat
+          bash tools/dev-env/setup-macos.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          . tools/dev-env/versions.sh
+          echo "VCPKG_ROOT=$HOME/vcpkg" >> "$GITHUB_ENV"
+          echo "QT_ROOT_DIR=$HOME/Qt/$QT_VERSION/macos" >> "$GITHUB_ENV"
+          echo "MITCAD_CEF_ROOT=$(tools/dev-env/fetch-cef.sh --print-root)" >> "$GITHUB_ENV"
+          bash .github/trial/mark.sh toolchain
+      - name: vcpkg dependencies (OCCT, embree, OIIO, ...)
+        run: |
+          "$VCPKG_ROOT/vcpkg" install --x-manifest-root="$PWD" --x-install-root="$MITCAD_RENDER_DEPS/vcpkg_installed" \
+            --overlay-triplets="$PWD/triplets" --triplet arm64-osx-dynamic --no-print-usage \
+            > "$RUNNER_TEMP/vcpkg.log" 2>&1 || { tail -80 "$RUNNER_TEMP/vcpkg.log"; for f in "$VCPKG_ROOT"/buildtrees/*/*-err.log; do [ -s "$f" ] && { echo "== $f"; tail -40 "$f"; }; done; bash .github/trial/mark.sh vcpkg-FAILED; exit 1; }
+          grep -E "^(Elapsed|Total install time)|Installing [0-9]+/" "$RUNNER_TEMP/vcpkg.log" | tail -60 || true
+          bash .github/trial/mark.sh vcpkg-deps
+          rm -rf "$VCPKG_ROOT/buildtrees" "$VCPKG_ROOT/packages" "$VCPKG_ROOT/downloads"
+          bash .github/trial/mark.sh vcpkg-cleanup
+      - name: Check the vcpkg binary cache for changes
+        if: always()
+        run: |
+          before=$(cat "$RUNNER_TEMP/bincache-count" 2> /dev/null || echo 0)
+          now=$(find "$VCPKG_DEFAULT_BINARY_CACHE" -type f 2> /dev/null | wc -l | tr -d ' ')
+          echo "bincache entries $before -> $now"
+          [ "$now" != "$(echo $before | tr -d ' ')" ] && echo "SAVE_VCPKG=1" >> "$GITHUB_ENV" || true
+      - uses: actions/cache/save@v4
+        if: always() && env.SAVE_VCPKG == '1'
+        with:
+          path: /Users/runner/vcpkg-bincache
+          key: vcpkg-macos-arm64-${{ hashFiles('vcpkg.json', 'third_party/vcpkg-ports/**', 'tools/dev-env/versions.sh', 'triplets/**') }}-${{ github.run_id }}
+      - name: Render worker libraries (OIDN, Cycles with Metal)
+        run: |
+          bash tools/dev-env/build-cycles-macos.sh || { for f in "$MITCAD_RENDER_DEPS"/*.log; do echo "== $f"; tail -60 "$f"; done; exit 1; }
+          echo "RENDER_OK=1" >> "$GITHUB_ENV"
+          bash .github/trial/mark.sh render-deps
+          du -sh "$MITCAD_RENDER_DEPS"/* || true
+      - name: Trim the render prefix for its cache
+        if: always() && steps.rcache.outputs.cache-hit != 'true' && env.RENDER_OK == '1'
+        run: rm -rf "$MITCAD_RENDER_DEPS/downloads" "$MITCAD_RENDER_DEPS/vcpkg_installed" "$MITCAD_RENDER_DEPS/build/oidn"
+      - uses: actions/cache/save@v4
+        if: always() && steps.rcache.outputs.cache-hit != 'true' && env.RENDER_OK == '1'
+        with:
+          path: /Users/runner/mitcad-render-deps
+          key: render-macos-arm64-${{ hashFiles('tools/dev-env/versions.sh', 'tools/dev-env/build-cycles-macos.sh', 'vcpkg.json', 'triplets/**', 'third_party/cycles/**') }}
+      - name: Configure (macos-release)
+        run: |
+          cmake --preset macos-release -DMITCAD_UPDATE_TEST_HOOKS=OFF
+          bash .github/trial/mark.sh configure
+      - name: Build
+        run: |
+          cmake --build build/macos-release
+          bash .github/trial/mark.sh build
+      - name: dmg (tools/package-macos.sh, ad hoc signature)
+        run: |
+          tools/package-macos.sh build/macos-release
+          ls -la build/macos-release/package/
+          bash .github/trial/mark.sh dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmg-macos-arm64
+          path: build/macos-release/package/*.dmg
+          retention-days: 3
+          compression-level: 0
+      - name: Final numbers
+        if: always()
+        run: |
+          bash .github/trial/mark.sh final
+          du -sh "$HOME"/* 2> /dev/null | sort -h | tail -15
