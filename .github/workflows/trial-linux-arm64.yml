@@ -77,6 +77,7 @@ jobs:
             /home/runner/mitcad-render-deps/install
             /home/runner/mitcad-render-deps/src/cycles-*
             /home/runner/mitcad-render-deps/build/cycles/bin
+            /home/runner/mitcad-render-deps/build/cycles/compile_commands.json
           key: render-linux-arm64-${{ hashFiles('tools/dev-env/versions.sh', 'tools/dev-env/build-cycles.sh', 'vcpkg.json') }}
       - name: Toolchain (Rust, vcpkg, Qt, CEF, AppImage tools)
         run: |
@@ -135,6 +136,7 @@ jobs:
             /home/runner/mitcad-render-deps/install
             /home/runner/mitcad-render-deps/src/cycles-*
             /home/runner/mitcad-render-deps/build/cycles/bin
+            /home/runner/mitcad-render-deps/build/cycles/compile_commands.json
           key: render-linux-arm64-${{ hashFiles('tools/dev-env/versions.sh', 'tools/dev-env/build-cycles.sh', 'vcpkg.json') }}
       - name: Configure (linux-release, arm64 triplet)
         run: |
@@ -143,7 +145,7 @@ jobs:
           bash .github/trial/mark.sh configure
       - name: Build
         run: |
-          cmake --build build/linux-release 2>&1 | tail -n 400
+          cmake --build build/linux-release -- -k 0 2>&1 | tail -n 400
           test "${PIPESTATUS[0]}" = 0
           bash .github/trial/mark.sh build
       - name: AppImage
