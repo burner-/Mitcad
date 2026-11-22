@@ -139,7 +139,7 @@ jobs:
       - name: Configure (linux-release, arm64 triplet)
         run: |
           cmake --preset linux-release -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
-            -DMITCAD_APPIMAGE_TOOLS="$MITCAD_APPIMAGE_TOOLS" -DMITCAD_UPDATE_TEST_HOOKS=OFF
+            -DMITCAD_APPIMAGE_TOOLS="$MITCAD_APPIMAGE_TOOLS" -DMITCAD_UPDATE_TEST_HOOKS=OFF -DPROJECT_ARCH=arm64
           bash .github/trial/mark.sh configure
       - name: Build
         run: |
