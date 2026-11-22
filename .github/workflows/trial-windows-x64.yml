@@ -18,6 +18,8 @@ defaults:
 env:
   MITCAD_RENDER_JOBS: "4"
   MITCAD_RENDER_REQUIRED_DEVICES: "CPU;CUDA"
+  # windows-latest has Visual Studio 2026 (v18), newer than CUDA 12.9 lists.
+  NVCC_APPEND_FLAGS: "-allow-unsupported-compiler"
 
 jobs:
   package:
@@ -48,11 +50,12 @@ jobs:
       - name: MSVC environment
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          & $vswhere -latest -products * -property catalog_productDisplayVersion
+          & $vswhere -all -products * -format text | Select-String 'installationPath|catalog_productDisplayVersion' | ForEach-Object { $_.Line }
+          $vs = & $vswhere -products * -version '[17.0,18.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1
+          if (-not $vs) { $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath }
           "Visual Studio: $vs"
           cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
-            if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV }
+            if ($_ -match '^([^=]+)=(.*)$' -and $Matches[1] -ne 'VCPKG_ROOT') { "$($Matches[1])=$($Matches[2])" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV }
           }
       - uses: actions/setup-python@v5
         with:
