@@ -5,6 +5,11 @@
 name: trial-windows-x64
 on:
   workflow_dispatch:
+  # The workflows are not on the default branch, so a run is started by
+  # changing this trigger file on the trial branch.
+  push:
+    branches: [trial-runners]
+    paths: ['.github/trial/run-windows-x64']
 
 defaults:
   run:
