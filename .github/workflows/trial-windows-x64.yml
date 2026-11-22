@@ -1,0 +1,165 @@
+# SPDX-License-Identifier: MIT
+# Runner trial: does the release installer and zip build on a free standard
+# windows-latest runner? No tests. Each step ends with a TRIAL| line
+# (.github/trial/mark.ps1): time, disk, peak memory, cache sizes.
+name: trial-windows-x64
+on:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  MITCAD_RENDER_JOBS: "4"
+  MITCAD_RENDER_REQUIRED_DEVICES: "CPU;CUDA"
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      - run: git config --global core.longpaths true
+      - uses: actions/checkout@v4
+      - name: Pick the build drive, start the watcher
+        run: |
+          Get-PSDrive -PSProvider FileSystem | Format-Table -AutoSize | Out-String | Write-Host
+          Get-CimInstance Win32_Processor | Select-Object Name, NumberOfLogicalProcessors | Format-List | Out-String | Write-Host
+          $os = Get-CimInstance Win32_OperatingSystem; "RAM {0:N1} GiB, {1}" -f ($os.TotalVisibleMemorySize / 1MB), $os.Caption
+          $c = (Get-PSDrive C).Free; $d = if (Get-PSDrive D -ErrorAction SilentlyContinue) { (Get-PSDrive D).Free } else { 0 }
+          $drive = if ($d -gt $c) { 'D' } else { 'C' }
+          $root = "${drive}:\t"
+          New-Item -ItemType Directory -Force $root | Out-Null
+          $fwd = $root -replace '\\', '/'
+          @(
+            "TRIAL_DRIVE=$drive", "R=$root", "VCPKG_ROOT=$fwd/vcpkg", "VCPKG_DEFAULT_BINARY_CACHE=$root\vb",
+            "MITCAD_RENDER_DEPS=$root\rd", "QT_ROOT_DIR=$fwd/Qt/6.12.0/msvc2022_64", "B=$root\b",
+            "TRIAL_SIZES=vcpkg-bincache=$root\vb;vcpkg-buildtrees=$root\vcpkg\buildtrees;render-deps=$root\rd;cargo-target=$root\b\cargo;build=$root\b;cargo-home=$env:USERPROFILE\.cargo"
+          ) | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'trial') | Out-Null
+          Start-Process powershell -WindowStyle Hidden -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "$PWD\.github\trial\watch.ps1", '-Drive', $drive)
+          $env:TRIAL_DRIVE = $drive
+          & .github/trial/mark.ps1 start
+      - name: MSVC environment
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          & $vswhere -latest -products * -property catalog_productDisplayVersion
+          "Visual Studio: $vs"
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV }
+          }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Restore vcpkg binary cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.R }}\vb
+          key: vcpkg-windows-x64-${{ hashFiles('vcpkg.json', 'third_party/vcpkg-ports/**', 'tools/dev-env/versions.sh') }}-${{ github.run_id }}
+          restore-keys: |
+            vcpkg-windows-x64-${{ hashFiles('vcpkg.json', 'third_party/vcpkg-ports/**', 'tools/dev-env/versions.sh') }}-
+            vcpkg-windows-x64-
+      - name: Restore render deps
+        id: rcache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.R }}\rd\install
+            ${{ env.R }}\rd\src\cycles-*
+            ${{ env.R }}\rd\build\cycles\bin
+          key: render-windows-x64-${{ hashFiles('tools/dev-env/versions.sh', 'tools/dev-env/build-cycles.ps1', 'vcpkg.json') }}
+      - name: Toolchain (Rust, NSIS, vcpkg, Qt, CEF)
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          (Get-ChildItem -Recurse -File $env:VCPKG_DEFAULT_BINARY_CACHE).Count | Set-Content (Join-Path $env:RUNNER_TEMP 'bincache-count')
+          $rust = (Select-String -Path rust-toolchain.toml -Pattern '^channel *= *"(.*)"').Matches[0].Groups[1].Value
+          rustup toolchain install $rust --profile minimal --component clippy,rustfmt --no-self-update
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) { choco install nsis -y --no-progress }
+            "${env:ProgramFiles(x86)}\NSIS" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          }
+          $pins = @{}
+          foreach ($line in Get-Content tools/dev-env/versions.sh) { if ($line -match '^([A-Z0-9_]+)="?([^"]*)"?$') { $pins[$Matches[1]] = $Matches[2] } }
+          git clone --quiet https://github.com/microsoft/vcpkg $env:VCPKG_ROOT
+          git -C $env:VCPKG_ROOT checkout --quiet $pins.VCPKG_COMMIT
+          & "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
+          python -m venv "$env:R\aqt"
+          & "$env:R\aqt\Scripts\pip.exe" install --quiet $pins.AQT_SPEC
+          Push-Location $env:RUNNER_TEMP
+          & "$env:R\aqt\Scripts\aqt.exe" install-qt windows desktop $pins.QT_VERSION win64_msvc2022_64 -O "$env:R\Qt"
+          Pop-Location
+          Test-Path "$env:QT_ROOT_DIR/bin/lrelease.exe"
+          $cef = & powershell -NoProfile -ExecutionPolicy Bypass -File tools/dev-env/fetch-cef.ps1 -Root "$env:R\cef" | Select-Object -Last 1
+          "MITCAD_CEF_ROOT=$cef" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          & .github/trial/mark.ps1 toolchain
+      - name: vcpkg dependencies (OCCT, embree, OIIO, ...)
+        run: |
+          & "$env:VCPKG_ROOT/vcpkg.exe" install "--x-manifest-root=$PWD" "--x-install-root=$env:MITCAD_RENDER_DEPS\vcpkg_installed" --triplet x64-windows --no-print-usage *> "$env:RUNNER_TEMP\vcpkg.log"
+          $rc = $LASTEXITCODE
+          Select-String -Path "$env:RUNNER_TEMP\vcpkg.log" -Pattern '^(Elapsed|Total install time)|Installing [0-9]+/' | Select-Object -Last 60 | ForEach-Object { $_.Line }
+          if ($rc -ne 0) {
+            Get-Content "$env:RUNNER_TEMP\vcpkg.log" -Tail 80
+            Get-ChildItem "$env:VCPKG_ROOT/buildtrees" -Recurse -Include '*-err.log', '*-out.log' -ErrorAction SilentlyContinue | Where-Object Length -gt 0 | Select-Object -Last 6 | ForEach-Object { "== $($_.FullName)"; Get-Content $_.FullName -Tail 40 }
+            & .github/trial/mark.ps1 vcpkg-FAILED
+            exit 1
+          }
+          & .github/trial/mark.ps1 vcpkg-deps
+          Remove-Item -Recurse -Force "$env:VCPKG_ROOT/buildtrees", "$env:VCPKG_ROOT/packages", "$env:VCPKG_ROOT/downloads" -ErrorAction SilentlyContinue
+          & .github/trial/mark.ps1 vcpkg-cleanup
+      - name: Check the vcpkg binary cache for changes
+        if: always()
+        run: |
+          $before = Get-Content (Join-Path $env:RUNNER_TEMP 'bincache-count') -ErrorAction SilentlyContinue
+          $now = (Get-ChildItem -Recurse -File $env:VCPKG_DEFAULT_BINARY_CACHE -ErrorAction SilentlyContinue).Count
+          "bincache entries $before -> $now"
+          if ("$now" -ne "$before") { 'SAVE_VCPKG=1' | Out-File -Append -Encoding utf8 $env:GITHUB_ENV }
+      - uses: actions/cache/save@v4
+        if: always() && env.SAVE_VCPKG == '1'
+        with:
+          path: ${{ env.R }}\vb
+          key: vcpkg-windows-x64-${{ hashFiles('vcpkg.json', 'third_party/vcpkg-ports/**', 'tools/dev-env/versions.sh') }}-${{ github.run_id }}
+      - name: Render worker libraries (OIDN, Cycles with CUDA kernels)
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          & powershell -NoProfile -ExecutionPolicy Bypass -File tools/dev-env/build-cycles.ps1 -Cuda
+          if ($LASTEXITCODE -ne 0) { Get-ChildItem "$env:MITCAD_RENDER_DEPS\*.log" | ForEach-Object { "== $($_.Name)"; Get-Content $_ -Tail 60 }; exit 1 }
+          'RENDER_OK=1' | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          & .github/trial/mark.ps1 render-deps
+      - uses: actions/cache/save@v4
+        if: always() && steps.rcache.outputs.cache-hit != 'true' && env.RENDER_OK == '1'
+        with:
+          path: |
+            ${{ env.R }}\rd\install
+            ${{ env.R }}\rd\src\cycles-*
+            ${{ env.R }}\rd\build\cycles\bin
+          key: render-windows-x64-${{ hashFiles('tools/dev-env/versions.sh', 'tools/dev-env/build-cycles.ps1', 'vcpkg.json') }}
+      - name: Configure (windows-release)
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cmake --preset windows-release -B $env:B -DMITCAD_UPDATE_TEST_HOOKS=OFF
+          & .github/trial/mark.ps1 configure
+      - name: Build
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cmake --build $env:B
+          & .github/trial/mark.ps1 build
+      - name: Package (NSIS installer and zip)
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cmake --build $env:B --target package
+          Get-ChildItem $env:B -Filter 'mitcad-*' -File | Format-Table Name, Length -AutoSize | Out-String | Write-Host
+          & .github/trial/mark.ps1 package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-windows-x64
+          path: |
+            ${{ env.B }}\mitcad-*.exe
+            ${{ env.B }}\mitcad-*.zip
+          retention-days: 3
+          compression-level: 0
+      - name: Final numbers
+        if: always()
+        run: |
+          & .github/trial/mark.ps1 final
