@@ -5,6 +5,11 @@
 name: trial-linux-arm64
 on:
   workflow_dispatch:
+  # The workflows are not on the default branch, so a run is started by
+  # changing this trigger file on the trial branch.
+  push:
+    branches: [trial-runners]
+    paths: ['.github/trial/run-linux-arm64']
 
 env:
   TRIAL_ROOT: /home/runner
