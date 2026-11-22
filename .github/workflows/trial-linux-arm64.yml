@@ -1,0 +1,155 @@
+# SPDX-License-Identifier: MIT
+# Runner trial: does the release AppImage build on a free standard
+# ubuntu-24.04-arm runner? No tests. Each step ends with a TRIAL| line
+# (.github/trial/mark.sh): time, disk, peak memory, cache sizes.
+name: trial-linux-arm64
+on:
+  workflow_dispatch:
+
+env:
+  TRIAL_ROOT: /home/runner
+  VCPKG_ROOT: /home/runner/vcpkg
+  VCPKG_DEFAULT_BINARY_CACHE: /home/runner/vcpkg-bincache
+  VCPKG_FORCE_SYSTEM_BINARIES: "1"
+  MITCAD_RENDER_DEPS: /home/runner/mitcad-render-deps
+  MITCAD_APPIMAGE_TOOLS: /home/runner/appimage-tools
+  QT_ROOT_DIR: /home/runner/Qt/6.12.0/gcc_arm64
+  TRIPLET: arm64-linux-dynamic
+  MITCAD_RENDER_JOBS: "4"
+  TRIAL_SIZES: >-
+    vcpkg-bincache=/home/runner/vcpkg-bincache
+    vcpkg-buildtrees=/home/runner/vcpkg/buildtrees
+    render-deps=/home/runner/mitcad-render-deps
+    cargo-target=/home/runner/work/Mitcad/Mitcad/build/linux-release/cargo
+    build=/home/runner/work/Mitcad/Mitcad/build
+    cargo-home=/home/runner/.cargo
+
+jobs:
+  appimage:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the watcher
+        run: |
+          mkdir -p "$RUNNER_TEMP/trial"
+          setsid nohup bash .github/trial/watch.sh /home/runner > /dev/null 2>&1 < /dev/null &
+          nproc; free -m; uname -a; lsb_release -a || true
+          bash .github/trial/mark.sh start
+      - name: Free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/share/powershell \
+            /usr/share/swift /usr/local/julia* /opt/microsoft /opt/google /usr/lib/jvm || true
+          sudo docker system prune -af > /dev/null 2>&1 || true
+          bash .github/trial/mark.sh free-disk
+      - name: System packages
+        run: |
+          sudo bash tools/dev-env/install-packages.sh
+          bash .github/trial/mark.sh apt
+      - name: Patch scripts for aarch64 (runner checkout only)
+        run: |
+          bash .github/trial/patch-linux-arm64.sh
+          bash .github/trial/mark.sh patch
+      - name: Restore vcpkg binary cache
+        id: vcache
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/vcpkg-bincache
+          key: vcpkg-linux-arm64-${{ hashFiles('vcpkg.json', 'third_party/vcpkg-ports/**', 'tools/dev-env/versions.sh') }}-${{ github.run_id }}
+          restore-keys: |
+            vcpkg-linux-arm64-${{ hashFiles('vcpkg.json', 'third_party/vcpkg-ports/**', 'tools/dev-env/versions.sh') }}-
+            vcpkg-linux-arm64-
+      - name: Restore render deps
+        id: rcache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /home/runner/mitcad-render-deps/install
+            /home/runner/mitcad-render-deps/src/cycles-*
+            /home/runner/mitcad-render-deps/build/cycles/bin
+          key: render-linux-arm64-${{ hashFiles('tools/dev-env/versions.sh', 'tools/dev-env/build-cycles.sh', 'vcpkg.json') }}
+      - name: Toolchain (Rust, vcpkg, Qt, CEF, AppImage tools)
+        run: |
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          find "$VCPKG_DEFAULT_BINARY_CACHE" -type f | wc -l > "$RUNNER_TEMP/bincache-count"
+          . tools/dev-env/versions.sh
+          RUST=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          if ! command -v rustup > /dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            . "$HOME/.cargo/env"
+          fi
+          rustup toolchain install "$RUST" --profile minimal --component clippy,rustfmt --no-self-update
+          git clone --quiet https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" checkout --quiet "$VCPKG_COMMIT"
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics > /dev/null
+          python3 -m venv "$HOME/tools/aqt"
+          "$HOME/tools/aqt/bin/pip" install --quiet "$AQT_SPEC"
+          (cd "$RUNNER_TEMP" && "$HOME/tools/aqt/bin/aqt" install-qt linux_arm64 desktop "$QT_VERSION" linux_gcc_arm64 -O "$HOME/Qt")
+          ls "$HOME/Qt/$QT_VERSION"
+          test -x "$QT_ROOT_DIR/bin/lrelease" || test -x "$QT_ROOT_DIR/libexec/lrelease" || ls -R "$QT_ROOT_DIR/bin" | head
+          CEF=$(tools/dev-env/fetch-cef.sh)
+          echo "MITCAD_CEF_ROOT=$CEF" >> "$GITHUB_ENV"
+          bash tools/dev-env/install-appimage-tools.sh
+          bash .github/trial/mark.sh toolchain
+      - name: vcpkg dependencies (OCCT, embree, OIIO, ...)
+        run: |
+          "$VCPKG_ROOT/vcpkg" install --x-manifest-root="$PWD" \
+            --x-install-root="$MITCAD_RENDER_DEPS/vcpkg_installed" --triplet "$TRIPLET" --no-print-usage \
+            > "$RUNNER_TEMP/vcpkg.log" 2>&1 || { tail -80 "$RUNNER_TEMP/vcpkg.log"; for f in "$VCPKG_ROOT"/buildtrees/*/*-out.log "$VCPKG_ROOT"/buildtrees/*/*-err.log; do [ -s "$f" ] && { echo "== $f"; tail -40 "$f"; }; done; bash .github/trial/mark.sh vcpkg-FAILED; exit 1; }
+          grep -E "^(Elapsed|Total install time)|Installing [0-9]+/" "$RUNNER_TEMP/vcpkg.log" | tail -60 || true
+          bash .github/trial/mark.sh vcpkg-deps
+          rm -rf "$VCPKG_ROOT/buildtrees" "$VCPKG_ROOT/packages" "$VCPKG_ROOT/downloads"
+          bash .github/trial/mark.sh vcpkg-cleanup
+      - name: Save vcpkg binary cache
+        if: always()
+        run: |
+          before=$(cat "$RUNNER_TEMP/bincache-count" 2> /dev/null || echo 0)
+          now=$(find "$VCPKG_DEFAULT_BINARY_CACHE" -type f 2> /dev/null | wc -l)
+          echo "bincache entries $before -> $now"
+          [ "$now" != "$before" ] && echo "SAVE_VCPKG=1" >> "$GITHUB_ENV" || true
+      - uses: actions/cache/save@v4
+        if: always() && env.SAVE_VCPKG == '1'
+        with:
+          path: /home/runner/vcpkg-bincache
+          key: vcpkg-linux-arm64-${{ hashFiles('vcpkg.json', 'third_party/vcpkg-ports/**', 'tools/dev-env/versions.sh') }}-${{ github.run_id }}
+      - name: Render worker libraries (OIDN, Cycles; no CUDA on arm64)
+        run: |
+          bash tools/dev-env/build-cycles.sh || { for f in "$MITCAD_RENDER_DEPS"/*.log; do echo "== $f"; tail -60 "$f"; done; exit 1; }
+          echo "RENDER_OK=1" >> "$GITHUB_ENV"
+          bash .github/trial/mark.sh render-deps
+      - uses: actions/cache/save@v4
+        if: always() && steps.rcache.outputs.cache-hit != 'true' && env.RENDER_OK == '1'
+        with:
+          path: |
+            /home/runner/mitcad-render-deps/install
+            /home/runner/mitcad-render-deps/src/cycles-*
+            /home/runner/mitcad-render-deps/build/cycles/bin
+          key: render-linux-arm64-${{ hashFiles('tools/dev-env/versions.sh', 'tools/dev-env/build-cycles.sh', 'vcpkg.json') }}
+      - name: Configure (linux-release, arm64 triplet)
+        run: |
+          cmake --preset linux-release -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
+            -DMITCAD_APPIMAGE_TOOLS="$MITCAD_APPIMAGE_TOOLS" -DMITCAD_UPDATE_TEST_HOOKS=OFF
+          bash .github/trial/mark.sh configure
+      - name: Build
+        run: |
+          cmake --build build/linux-release 2>&1 | tail -n 400
+          test "${PIPESTATUS[0]}" = 0
+          bash .github/trial/mark.sh build
+      - name: AppImage
+        run: |
+          cmake --build build/linux-release --target appimage
+          ls -la build/linux-release/*.AppImage
+          bash .github/trial/mark.sh appimage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage-linux-arm64
+          path: build/linux-release/*.AppImage
+          retention-days: 3
+          compression-level: 0
+      - name: Final numbers
+        if: always()
+        run: |
+          bash .github/trial/mark.sh final
+          du -sh /home/runner/* 2> /dev/null | sort -h | tail -15
