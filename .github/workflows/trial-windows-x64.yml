@@ -76,6 +76,7 @@ jobs:
             ${{ env.R }}\rd\install
             ${{ env.R }}\rd\src\cycles-*
             ${{ env.R }}\rd\build\cycles\bin
+            ${{ env.R }}\rd\build\cycles\compile_commands.json
           key: render-windows-x64-${{ hashFiles('tools/dev-env/versions.sh', 'tools/dev-env/build-cycles.ps1', 'vcpkg.json') }}
       - name: Toolchain (Rust, NSIS, vcpkg, Qt, CEF)
         run: |
@@ -142,6 +143,7 @@ jobs:
             ${{ env.R }}\rd\install
             ${{ env.R }}\rd\src\cycles-*
             ${{ env.R }}\rd\build\cycles\bin
+            ${{ env.R }}\rd\build\cycles\compile_commands.json
           key: render-windows-x64-${{ hashFiles('tools/dev-env/versions.sh', 'tools/dev-env/build-cycles.ps1', 'vcpkg.json') }}
       - name: Configure (windows-release)
         run: |
