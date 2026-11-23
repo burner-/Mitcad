@@ -19,7 +19,7 @@ env:
 jobs:
   plan_ma:
     name: plan macos-arm64
-    runs-on: macos-latest
+    runs-on: macos-15
     env: { TRIAL_PLATFORM: macos-arm64 }
     outputs:
       l0: ${{ steps.plan.outputs.l0 }}
@@ -52,7 +52,7 @@ jobs:
     name: L0 macos-arm64 ${{ matrix.name }}
     needs: [plan_ma]
     if: ${{ !cancelled() && needs.plan_ma.result == 'success' && needs.plan_ma.outputs.l0 != '[]' }}
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
@@ -97,7 +97,7 @@ jobs:
     name: L1 macos-arm64 ${{ matrix.name }}
     needs: [plan_ma, l0_ma]
     if: ${{ !cancelled() && needs.plan_ma.result == 'success' && needs.plan_ma.outputs.l1 != '[]' }}
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
@@ -144,7 +144,7 @@ jobs:
     name: L2 macos-arm64 ${{ matrix.name }}
     needs: [plan_ma, l1_ma]
     if: ${{ !cancelled() && needs.plan_ma.result == 'success' && needs.plan_ma.outputs.l2 != '[]' }}
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
@@ -191,7 +191,7 @@ jobs:
     name: L3 macos-arm64 ${{ matrix.name }}
     needs: [plan_ma, l2_ma]
     if: ${{ !cancelled() && needs.plan_ma.result == 'success' && needs.plan_ma.outputs.l3 != '[]' }}
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
@@ -238,7 +238,7 @@ jobs:
     name: L4 macos-arm64 ${{ matrix.name }}
     needs: [plan_ma, l3_ma]
     if: ${{ !cancelled() && needs.plan_ma.result == 'success' && needs.plan_ma.outputs.l4 != '[]' }}
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
@@ -285,7 +285,7 @@ jobs:
     name: L5 macos-arm64 ${{ matrix.name }}
     needs: [plan_ma, l4_ma]
     if: ${{ !cancelled() && needs.plan_ma.result == 'success' && needs.plan_ma.outputs.l5 != '[]' }}
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
@@ -332,7 +332,7 @@ jobs:
     name: deps+render macos-arm64
     needs: [plan_ma, l0_ma, l1_ma, l2_ma, l3_ma, l4_ma, l5_ma]
     if: ${{ !cancelled() && needs.plan_ma.result == 'success' }}
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     steps:
@@ -382,7 +382,7 @@ jobs:
           df -h "$TRIAL_R" 2> /dev/null | tail -1 || true
   rust_ma:
     name: rust macos-arm64
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 240
     env: { TRIAL_PLATFORM: macos-arm64 }
     steps:
@@ -406,7 +406,7 @@ jobs:
   build_ma:
     name: build macos-arm64
     needs: [deps_ma]
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     steps:
@@ -466,7 +466,7 @@ jobs:
   test_ma:
     name: test macos-arm64 ${{ matrix.kind }} ${{ matrix.k }}/${{ matrix.n }}
     needs: [build_ma]
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 180
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
