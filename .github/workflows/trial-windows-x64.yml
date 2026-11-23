@@ -51,8 +51,7 @@ jobs:
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           & $vswhere -all -products * -format text | Select-String 'installationPath|catalog_productDisplayVersion' | ForEach-Object { $_.Line }
-          $vs = & $vswhere -products * -version '[17.0,18.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1
-          if (-not $vs) { $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath }
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           "Visual Studio: $vs"
           cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
             if ($_ -match '^([^=]+)=(.*)$' -and $Matches[1] -ne 'VCPKG_ROOT') { "$($Matches[1])=$($Matches[2])" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV }
@@ -129,9 +128,21 @@ jobs:
         with:
           path: ${{ env.R }}\vb
           key: vcpkg-windows-x64-${{ hashFiles('vcpkg.json', 'third_party/vcpkg-ports/**', 'tools/dev-env/versions.sh') }}-${{ github.run_id }}
-      - name: Render worker libraries (OIDN, Cycles with CUDA kernels)
+      - name: VS 2022 C++ build tools (CUDA 12.9's cudafe++ crashes on VS 2026's headers)
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
+          choco install visualstudio2022-workload-vctools -y --no-progress
+          & .github/trial/mark.ps1 vs2022-tools
+      - name: Render worker libraries (OIDN, Cycles with CUDA kernels; VS 2022 environment)
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs22 = & $vswhere -products * -version '[17.0,18.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1
+          "VS 2022: $vs22"
+          cmd /c "`"$vs22\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$' -and $Matches[1] -ne 'VCPKG_ROOT') { Set-Item -Path "env:$($Matches[1])" -Value $Matches[2] }
+          }
+          (Get-Command cl.exe).Source
           & powershell -NoProfile -ExecutionPolicy Bypass -File tools/dev-env/build-cycles.ps1 -Cuda
           if ($LASTEXITCODE -ne 0) { Get-ChildItem "$env:MITCAD_RENDER_DEPS\*.log" | ForEach-Object { "== $($_.Name)"; Get-Content $_ -Tail 60 }; exit 1 }
           'RENDER_OK=1' | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
