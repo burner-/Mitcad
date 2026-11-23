@@ -75,6 +75,27 @@ def closure(names):
 
 
 out = {}
+if len(sys.argv) > 5 and sys.argv[5] == "flat":
+    # One level: each big port builds its whole closure in its own job from the
+    # start (the small packages it shares are built more than once); the
+    # packages no big port needs share one job.
+    FLAT = ["opencascade", "openimageio", "embree", "libheif"]
+    jobs, covered = [], set()
+    for n in FLAT:
+        if n in features:
+            jobs.append({"name": n, "specs": spec(n), "all": closure([n])})
+            covered |= set(closure([n]).split())
+    rest = [n for n in sorted(features) if spec(n) not in covered]
+    if rest:
+        jobs.append({"name": "misc", "specs": " ".join(spec(n) for n in rest), "all": closure(rest)})
+    for j in jobs:
+        print(f"flat job {j['name']}: {j['all']}")
+    with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+        f.write(f"l0={json.dumps(jobs)}\n")
+        for i in range(1, nlevels):
+            f.write(f"l{i}=[]\n")
+        f.write(f"packages={len(features)}\n")
+    raise SystemExit(0)
 for i in range(nlevels):
     names = sorted(n for n in features if level[n] == i)
     jobs = [{"name": n, "specs": spec(n), "all": closure([n])} for n in names if n in HEAVY]
