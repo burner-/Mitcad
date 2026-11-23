@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT
+# Dependency trial: which macOS runner labels get a runner now.
+name: trial-mac-probe
+on:
+  push:
+    branches: [trial-deps]
+    paths: ['.github/trial/run-mac-probe']
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15, macos-26, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: sw_vers; sysctl -n hw.ncpu hw.memsize; xcodebuild -version | head -1
