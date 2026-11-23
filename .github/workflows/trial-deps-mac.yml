@@ -19,7 +19,7 @@ env:
 jobs:
   plan_ma:
     name: plan macos-arm64
-    runs-on: macos-15
+    runs-on: macos-latest
     env: { TRIAL_PLATFORM: macos-arm64 }
     outputs:
       l0: ${{ steps.plan.outputs.l0 }}
@@ -52,11 +52,12 @@ jobs:
     name: L0 macos-arm64 ${{ matrix.name }}
     needs: [plan_ma]
     if: ${{ !cancelled() && needs.plan_ma.result == 'success' && needs.plan_ma.outputs.l0 != '[]' }}
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include: ${{ fromJSON(needs.plan_ma.outputs.l0) }}
     steps:
@@ -97,11 +98,12 @@ jobs:
     name: L1 macos-arm64 ${{ matrix.name }}
     needs: [plan_ma, l0_ma]
     if: ${{ !cancelled() && needs.plan_ma.result == 'success' && needs.plan_ma.outputs.l1 != '[]' }}
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include: ${{ fromJSON(needs.plan_ma.outputs.l1) }}
     steps:
@@ -144,11 +146,12 @@ jobs:
     name: L2 macos-arm64 ${{ matrix.name }}
     needs: [plan_ma, l1_ma]
     if: ${{ !cancelled() && needs.plan_ma.result == 'success' && needs.plan_ma.outputs.l2 != '[]' }}
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include: ${{ fromJSON(needs.plan_ma.outputs.l2) }}
     steps:
@@ -191,11 +194,12 @@ jobs:
     name: L3 macos-arm64 ${{ matrix.name }}
     needs: [plan_ma, l2_ma]
     if: ${{ !cancelled() && needs.plan_ma.result == 'success' && needs.plan_ma.outputs.l3 != '[]' }}
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include: ${{ fromJSON(needs.plan_ma.outputs.l3) }}
     steps:
@@ -238,11 +242,12 @@ jobs:
     name: L4 macos-arm64 ${{ matrix.name }}
     needs: [plan_ma, l3_ma]
     if: ${{ !cancelled() && needs.plan_ma.result == 'success' && needs.plan_ma.outputs.l4 != '[]' }}
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include: ${{ fromJSON(needs.plan_ma.outputs.l4) }}
     steps:
@@ -285,11 +290,12 @@ jobs:
     name: L5 macos-arm64 ${{ matrix.name }}
     needs: [plan_ma, l4_ma]
     if: ${{ !cancelled() && needs.plan_ma.result == 'success' && needs.plan_ma.outputs.l5 != '[]' }}
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include: ${{ fromJSON(needs.plan_ma.outputs.l5) }}
     steps:
@@ -332,7 +338,7 @@ jobs:
     name: deps+render macos-arm64
     needs: [plan_ma, l0_ma, l1_ma, l2_ma, l3_ma, l4_ma, l5_ma]
     if: ${{ !cancelled() && needs.plan_ma.result == 'success' }}
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     steps:
@@ -380,33 +386,10 @@ jobs:
         run: |
           echo "TRIAL| peaks | mem $(cat "$RUNNER_TEMP/trial/mempeak" 2> /dev/null || echo ?) MiB | disk used $(( $(cat "$RUNNER_TEMP/trial/diskpeak" 2> /dev/null || echo 0) / 1024 )) GiB"
           df -h "$TRIAL_R" 2> /dev/null | tail -1 || true
-  rust_ma:
-    name: rust macos-arm64
-    runs-on: macos-15
-    timeout-minutes: 240
-    env: { TRIAL_PLATFORM: macos-arm64 }
-    steps:
-      - uses: actions/checkout@v4
-      - name: Rust core library (the crates CMake imports), release
-        run: |
-          RUST=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
-          command -v rustup > /dev/null || { curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none; . "$HOME/.cargo/env"; echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; }
-          t0=$(date +%s)
-          rustup toolchain install "$RUST" --profile minimal --no-self-update > /dev/null
-          echo "TRIAL| rust toolchain | $(( $(date +%s) - t0 )) s"
-          t0=$(date +%s)
-          cargo build --release --manifest-path core/Cargo.toml -p mitcad-ffi -p mitcad-update -p mitcad-testrun -p mitcad-thumbnailer -p mitcad-thumbnailer-capi 2>&1 | tail -5
-          test "${PIPESTATUS[0]}" = 0
-          echo "TRIAL| rust core library (release) | $(( $(date +%s) - t0 )) s"
-      - name: Rust tests built (debug, as core.cargo_build)
-        run: |
-          t0=$(date +%s)
-          cargo test --no-run --workspace --manifest-path core/Cargo.toml 2>&1 | tail -5
-          echo "TRIAL| rust tests built (debug) | $(( $(date +%s) - t0 )) s exit ${PIPESTATUS[0]}"
   build_ma:
     name: build macos-arm64
     needs: [deps_ma]
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
     steps:
@@ -466,11 +449,12 @@ jobs:
   test_ma:
     name: test macos-arm64 ${{ matrix.kind }} ${{ matrix.k }}/${{ matrix.n }}
     needs: [build_ma]
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 180
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include:
           - { kind: core, k: 1, n: 1 }
