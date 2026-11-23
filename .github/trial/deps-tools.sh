@@ -3,12 +3,22 @@
 # Dependency trial: the toolchain a vcpkg job needs on this runner, the same
 # in every job of a platform (vcpkg's ABI hashes include the compiler and
 # CMake), and vcpkg at the pinned commit. Run from the repo root with
-# PLATFORM set (linux-x64, linux-arm64, windows-x64, macos-arm64).
+# TRIAL_PLATFORM set (linux-x64, linux-arm64, windows-x64, macos-arm64).
 # Writes VCPKG_ROOT, VCPKG_EXE, TRIAL_R and the binary-cache variables to
 # GITHUB_ENV.
 set -euo pipefail
 . tools/dev-env/versions.sh
-case "$PLATFORM" in
+if [ "$TRIAL_PLATFORM" != windows-x64 ]; then
+  # The export drops the executable bits.
+  git ls-files '*.sh' | xargs chmod +x
+  chmod +x packaging/linux/AppRun 2> /dev/null || true
+  echo "REPO=$PWD" >> "$GITHUB_ENV"
+  echo "PY=python3" >> "$GITHUB_ENV"
+else
+  echo "REPO=$(cygpath -m "$PWD")" >> "$GITHUB_ENV"
+  echo "PY=python" >> "$GITHUB_ENV"
+fi
+case "$TRIAL_PLATFORM" in
   linux-*)
     R=$HOME/t
     sudo apt-get update -qq
@@ -18,7 +28,7 @@ case "$PLATFORM" in
       libgl1-mesa-dev libegl1-mesa-dev libx11-dev libxext-dev libxi-dev libxrandr-dev \
       libxcursor-dev libxinerama-dev libxkbcommon-dev libfontconfig1-dev libfreetype-dev > /dev/null
     echo "VCPKG_FORCE_SYSTEM_BINARIES=1" >> "$GITHUB_ENV"
-    if [ "$PLATFORM" = linux-arm64 ]; then
+    if [ "$TRIAL_PLATFORM" = linux-arm64 ]; then
       # Cycles' ARM branch needs sse2neon on Linux arm64 too (runner checkout only).
       sed -i 's/"platform": "osx & arm64"/"platform": "arm64"/' vcpkg.json
     fi
@@ -54,13 +64,13 @@ case "$PLATFORM" in
     export PATH=$HOME/.local/bin:$PATH
     cmake --version | head -1
     ;;
-  *) echo "unknown PLATFORM $PLATFORM" >&2; exit 1 ;;
+  *) echo "unknown TRIAL_PLATFORM $TRIAL_PLATFORM" >&2; exit 1 ;;
 esac
 mkdir -p "$R"
 VCPKG_ROOT=$R/vcpkg
 git clone --quiet https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
 git -C "$VCPKG_ROOT" checkout --quiet "$VCPKG_COMMIT"
-if [ "$PLATFORM" = windows-x64 ]; then
+if [ "$TRIAL_PLATFORM" = windows-x64 ]; then
   (cd "$VCPKG_ROOT" && cmd //c bootstrap-vcpkg.bat -disableMetrics > /dev/null)
   VCPKG_EXE=$VCPKG_ROOT/vcpkg.exe
   # vcpkg wants Windows paths in its variables.
