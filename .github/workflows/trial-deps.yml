@@ -28,10 +28,9 @@ jobs:
           "$VCPKG_EXE" install --dry-run --x-manifest-root="$PWD" --overlay-triplets="$PWD/triplets" \
             --triplet ${{ matrix.triplet }} --host-triplet ${{ matrix.host }} --x-install-root="$TRIAL_R/inst" > plan/dry-run.txt 2>&1 || true
           cat plan/dry-run.txt
-          specs=$(sed -n 's/^ *\* *//; s/^ \{2,\}//; s/ .*//; /^[a-z0-9-]*\[.*\]:[a-z0-9-]*@/p' plan/dry-run.txt | sed 's/@.*//' | tr '\n' ' ')
-          echo "SPECS: $specs"
-          "$VCPKG_EXE" depend-info $specs --overlay-ports="$PWD/third_party/vcpkg-ports" --overlay-triplets="$PWD/triplets" \
-            --host-triplet ${{ matrix.host }} > plan/depend-info.txt 2>&1 || true
-          cat plan/depend-info.txt
+          for f in list dot; do
+            "$VCPKG_EXE" depend-info --x-manifest-root="$PWD" --overlay-triplets="$PWD/triplets" --format=$f --show-depth               --triplet ${{ matrix.triplet }} --host-triplet ${{ matrix.host }} > plan/depend-info-$f.txt 2>&1 || true
+            cat plan/depend-info-$f.txt
+          done
       - uses: actions/upload-artifact@v4
         with: { name: "plan-${{ matrix.platform }}", path: plan, retention-days: 3 }
