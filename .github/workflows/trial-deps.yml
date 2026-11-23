@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: MIT
+# Dependency trial (probe): the vcpkg install plan and dependency graph per platform.
+name: trial-deps
+on:
+  push:
+    branches: [trial-deps]
+    paths: ['.github/trial/run-deps']
+jobs:
+  plan:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x64, os: ubuntu-24.04, triplet: x64-linux-dynamic, host: x64-linux }
+          - { platform: linux-arm64, os: ubuntu-24.04-arm, triplet: arm64-linux-dynamic, host: arm64-linux }
+          - { platform: windows-x64, os: windows-latest, triplet: x64-windows, host: x64-windows }
+          - { platform: macos-arm64, os: macos-latest, triplet: arm64-osx-dynamic, host: arm64-osx }
+    runs-on: ${{ matrix.os }}
+    defaults: { run: { shell: bash } }
+    env: { PLATFORM: "${{ matrix.platform }}" }
+    steps:
+      - run: git config --global core.longpaths true
+      - uses: actions/checkout@v4
+      - run: bash .github/trial/deps-tools.sh
+      - name: Plan
+        run: |
+          mkdir -p plan
+          "$VCPKG_EXE" install --dry-run --x-manifest-root="$PWD" --overlay-triplets="$PWD/triplets" \
+            --triplet ${{ matrix.triplet }} --host-triplet ${{ matrix.host }} --x-install-root="$TRIAL_R/inst" > plan/dry-run.txt 2>&1 || true
+          cat plan/dry-run.txt
+          specs=$(sed -n 's/^ *\* *//; s/^ \{2,\}//; s/ .*//; /^[a-z0-9-]*\[.*\]:[a-z0-9-]*@/p' plan/dry-run.txt | sed 's/@.*//' | tr '\n' ' ')
+          echo "SPECS: $specs"
+          "$VCPKG_EXE" depend-info $specs --overlay-ports="$PWD/third_party/vcpkg-ports" --overlay-triplets="$PWD/triplets" \
+            --host-triplet ${{ matrix.host }} > plan/depend-info.txt 2>&1 || true
+          cat plan/depend-info.txt
+      - uses: actions/upload-artifact@v4
+        with: { name: "plan-${{ matrix.platform }}", path: plan, retention-days: 3 }
