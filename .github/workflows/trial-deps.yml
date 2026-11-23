@@ -16,6 +16,7 @@ defaults:
 env:
   MITCAD_RENDER_JOBS: "4"
   NVCC_APPEND_FLAGS: "-allow-unsupported-compiler"
+permissions: { actions: read, contents: read }
 jobs:
   plan_lx:
     name: plan linux-x64
@@ -406,6 +407,7 @@ jobs:
   build_lx:
     name: build linux-x64
     needs: [deps_lx]
+    if: ${{ !cancelled() && needs.deps_lx.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: linux-x64 }
@@ -466,6 +468,7 @@ jobs:
   test_lx:
     name: test linux-x64 ${{ matrix.kind }} ${{ matrix.k }}/${{ matrix.n }}
     needs: [build_lx]
+    if: ${{ !cancelled() && needs.build_lx.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env: { TRIAL_PLATFORM: linux-x64 }
@@ -919,6 +922,7 @@ jobs:
   build_la:
     name: build linux-arm64
     needs: [deps_la]
+    if: ${{ !cancelled() && needs.deps_la.result == 'success' }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: linux-arm64 }
@@ -979,6 +983,7 @@ jobs:
   test_la:
     name: test linux-arm64 ${{ matrix.kind }} ${{ matrix.k }}/${{ matrix.n }}
     needs: [build_la]
+    if: ${{ !cancelled() && needs.build_la.result == 'success' }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
     env: { TRIAL_PLATFORM: linux-arm64 }
@@ -1460,6 +1465,7 @@ jobs:
   build_wx:
     name: build windows-x64
     needs: [deps_wx]
+    if: ${{ !cancelled() && needs.deps_wx.result == 'success' }}
     runs-on: windows-latest
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: windows-x64 }
@@ -1528,6 +1534,7 @@ jobs:
   test_wx:
     name: test windows-x64 ${{ matrix.kind }} ${{ matrix.k }}/${{ matrix.n }}
     needs: [build_wx]
+    if: ${{ !cancelled() && needs.build_wx.result == 'success' }}
     runs-on: windows-latest
     timeout-minutes: 180
     env: { TRIAL_PLATFORM: windows-x64 }
@@ -1634,6 +1641,7 @@ jobs:
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include: ${{ fromJSON(needs.plan_ma.outputs.l0) }}
     steps:
@@ -1679,6 +1687,7 @@ jobs:
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include: ${{ fromJSON(needs.plan_ma.outputs.l1) }}
     steps:
@@ -1726,6 +1735,7 @@ jobs:
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include: ${{ fromJSON(needs.plan_ma.outputs.l2) }}
     steps:
@@ -1773,6 +1783,7 @@ jobs:
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include: ${{ fromJSON(needs.plan_ma.outputs.l3) }}
     steps:
@@ -1820,6 +1831,7 @@ jobs:
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include: ${{ fromJSON(needs.plan_ma.outputs.l4) }}
     steps:
@@ -1867,6 +1879,7 @@ jobs:
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include: ${{ fromJSON(needs.plan_ma.outputs.l5) }}
     steps:
@@ -1957,32 +1970,10 @@ jobs:
         run: |
           echo "TRIAL| peaks | mem $(cat "$RUNNER_TEMP/trial/mempeak" 2> /dev/null || echo ?) MiB | disk used $(( $(cat "$RUNNER_TEMP/trial/diskpeak" 2> /dev/null || echo 0) / 1024 )) GiB"
           df -h "$TRIAL_R" 2> /dev/null | tail -1 || true
-  rust_ma:
-    name: rust macos-arm64
-    runs-on: macos-latest
-    timeout-minutes: 240
-    env: { TRIAL_PLATFORM: macos-arm64 }
-    steps:
-      - uses: actions/checkout@v4
-      - name: Rust core library (the crates CMake imports), release
-        run: |
-          RUST=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
-          command -v rustup > /dev/null || { curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none; . "$HOME/.cargo/env"; echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; }
-          t0=$(date +%s)
-          rustup toolchain install "$RUST" --profile minimal --no-self-update > /dev/null
-          echo "TRIAL| rust toolchain | $(( $(date +%s) - t0 )) s"
-          t0=$(date +%s)
-          cargo build --release --manifest-path core/Cargo.toml -p mitcad-ffi -p mitcad-update -p mitcad-testrun -p mitcad-thumbnailer -p mitcad-thumbnailer-capi 2>&1 | tail -5
-          test "${PIPESTATUS[0]}" = 0
-          echo "TRIAL| rust core library (release) | $(( $(date +%s) - t0 )) s"
-      - name: Rust tests built (debug, as core.cargo_build)
-        run: |
-          t0=$(date +%s)
-          cargo test --no-run --workspace --manifest-path core/Cargo.toml 2>&1 | tail -5
-          echo "TRIAL| rust tests built (debug) | $(( $(date +%s) - t0 )) s exit ${PIPESTATUS[0]}"
   build_ma:
     name: build macos-arm64
     needs: [deps_ma]
+    if: ${{ !cancelled() && needs.deps_ma.result == 'success' }}
     runs-on: macos-latest
     timeout-minutes: 360
     env: { TRIAL_PLATFORM: macos-arm64 }
@@ -2043,11 +2034,13 @@ jobs:
   test_ma:
     name: test macos-arm64 ${{ matrix.kind }} ${{ matrix.k }}/${{ matrix.n }}
     needs: [build_ma]
+    if: ${{ !cancelled() && needs.build_ma.result == 'success' }}
     runs-on: macos-latest
     timeout-minutes: 180
     env: { TRIAL_PLATFORM: macos-arm64 }
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include:
           - { kind: core, k: 1, n: 1 }
